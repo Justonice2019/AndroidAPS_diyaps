@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
+import java.security.MessageDigest
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -92,6 +93,7 @@ class NSClientV3Service : DaggerService() {
 
     internal var storageSocket: Socket? = null
     private var alarmSocket: Socket? = null
+    internal var socketWeb: Socket? = null
     internal var wsConnected = false
 
     private fun shutdownWebsockets() {
@@ -101,6 +103,7 @@ class NSClientV3Service : DaggerService() {
         storageSocket?.on("update", onDataCreateUpdate)
         storageSocket?.on("delete", onDataDelete)
         storageSocket?.disconnect()
+        
         alarmSocket?.on(Socket.EVENT_CONNECT, onConnectAlarms)
         alarmSocket?.on(Socket.EVENT_DISCONNECT, onDisconnectAlarm)
         alarmSocket?.on("announcement", onAnnouncement)
@@ -108,9 +111,51 @@ class NSClientV3Service : DaggerService() {
         alarmSocket?.on("urgent_alarm", onUrgentAlarm)
         alarmSocket?.on("clear_alarm", onClearAlarm)
         alarmSocket?.disconnect()
+
+        socketWeb?.on(Socket.EVENT_CONNECT, onConnectWeb)
+        socketWeb?.on(Socket.EVENT_DISCONNECT, onDisconnectWeb)
+        socketWeb?.on("dataUpdate", onDataUpdateWeb)
+        socketWeb?.disconnect()
+
         wsConnected = false
         storageSocket = null
         alarmSocket = null
+    }
+
+    fun getV1apisecrethash(apisecret: String): String {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-1")
+            val hashBytes = digest.digest(apisecret.toByteArray(Charsets.UTF_8))
+            hashBytes.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
+    }
+    private val onConnectWeb = Emitter.Listener {
+        val socketId = socketWeb?.id() ?: "NULL"
+        rxBus.send(EventNSClientNewLog("◄ WS Web", "connected web ID: $socketId"))
+        if (socketWeb != null) {
+            val authMessage = JSONObject().also {
+                it.put("client", "web")
+                val hash = getV1apisecrethash(preferences.get(StringKey.NsClientApiSecret))
+                it.put("secret", hash)
+                // it.put("token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3NUb2tlbiI6ImFkbWluLTBmOWYzMmNiOGYwYThhYzkiLCJpYXQiOjE3NjYwNjg1NDEsImV4cCI6MTc2NjE1NDk0MX0.PMZMuoEE_tIfJi0AqjyEpCnPCV_2IRCNueVh1hWQCnQ")
+                it.put("history", 5)
+            }
+            socketWeb?.emit("authorize", authMessage, Ack { args ->
+                val response = args[0] as JSONObject
+                rxBus.send(EventNSClientNewLog("◄ WS Web", "Authorized {read: ${response.optBoolean("read")}, write_treatment: ${response.optBoolean("write_treatment")}} "))
+            })
+        }
+    }
+    private val onDisconnectWeb = Emitter.Listener {args ->
+        rxBus.send(EventNSClientNewLog("◄ WS Web", "disconnect web event"))
+    }
+    
+    private val onDataUpdateWeb = Emitter.Listener {args ->
+        val data = args[0] as JSONObject
+        rxBus.send(EventNSClientNewLog("◄ WS Web", "dataUpdate $data"))
     }
 
     @Suppress("SameParameterValue")
@@ -125,6 +170,15 @@ class NSClientV3Service : DaggerService() {
         }
         val urlStorage = wsBaseUrl + "/storage"
         val urlAlarm = wsBaseUrl + "/alarm"
+        val url = wsBaseUrl
+
+        socketWeb = IO.socket(url).also {socket ->
+            socket.on(Socket.EVENT_CONNECT, onConnectWeb)
+            socket.on(Socket.EVENT_DISCONNECT, onDisconnectWeb)
+            socket.connect()
+            socket.on("dataUpdate", onDataUpdateWeb)
+        }
+
         if (!nsClientV3Plugin.isAllowed) {
             rxBus.send(EventNSClientNewLog("● WS", nsClientV3Plugin.blockingReason))
         } else if (sp.getBoolean(R.string.key_ns_paused, false)) {
