@@ -1,6 +1,6 @@
 package app.aaps.plugins.sync.nsclientV3.services
 
-import android.annotation.SuppressLint
+import  android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
@@ -12,6 +12,10 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.notifications.Notification
 import app.aaps.core.interfaces.nsclient.NSAlarm
 import app.aaps.core.interfaces.nsclient.StoreDataForDb
+import app.aaps.core.interfaces.pump.DetailedBolusInfo
+import app.aaps.core.interfaces.pump.PumpEnactResult
+import app.aaps.core.interfaces.pump.PumpSync
+import app.aaps.core.interfaces.pump.VirtualPump
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventDismissNotification
@@ -19,6 +23,7 @@ import app.aaps.core.interfaces.rx.events.EventNSClientNewLog
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.Preferences
 import app.aaps.core.keys.StringKey
@@ -26,6 +31,7 @@ import app.aaps.core.nssdk.mapper.toNSDeviceStatus
 import app.aaps.core.nssdk.mapper.toNSFood
 import app.aaps.core.nssdk.mapper.toNSSgvV3
 import app.aaps.core.nssdk.mapper.toNSTreatment
+import app.aaps.core.interfaces.queue.Callback
 import app.aaps.plugins.sync.R
 import app.aaps.plugins.sync.nsShared.NSAlarmObject
 import app.aaps.plugins.sync.nsShared.NsIncomingDataProcessor
@@ -43,6 +49,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URISyntaxException
 import javax.inject.Inject
+import app.aaps.core.interfaces.logging.UserEntryLogger
 
 @Suppress("SpellCheckingInspection")
 class NSClientV3Service : DaggerService() {
@@ -60,6 +67,10 @@ class NSClientV3Service : DaggerService() {
     @Inject lateinit var storeDataForDb: StoreDataForDb
     @Inject lateinit var uiInteraction: UiInteraction
     @Inject lateinit var nsDeviceStatusHandler: NSDeviceStatusHandler
+    @Inject lateinit var commandQueue: CommandQueue
+    @Inject lateinit var constraintChecker: app.aaps.core.interfaces.constraints.ConstraintsChecker
+    @Inject lateinit var uel: UserEntryLogger
+
 
     private val disposable = CompositeDisposable()
 
@@ -156,6 +167,58 @@ class NSClientV3Service : DaggerService() {
     private val onDataUpdateWeb = Emitter.Listener {args ->
         val data = args[0] as JSONObject
         rxBus.send(EventNSClientNewLog("◄ WS Web", "dataUpdate $data"))
+        
+        // 处理远程打药请求
+        try {
+            // 检查是否有treatments数组 (根据示例数据使用treaments拼写)
+            if (data.has("treatments")) {
+                val treatments = data.getJSONArray("treatments")
+                for (i in 0 until treatments.length()) {
+                    val treatment = treatments.getJSONObject(i)
+                    // 检查是否有_insulin字段且值大于0
+                    if (treatment.has("_insulin") && treatment.getDouble("_insulin") > 0) {
+                        // 调用处理打药的方法
+                        handleRemoteBolusFromTreatment(treatment)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.NSCLIENT, "Error processing remote bolus: ", e)
+            rxBus.send(EventNSClientNewLog("◄ WS Web", "Error processing remote bolus: ${e.message}"))
+        }
+    }
+    
+    // 处理从treatment对象中提取的打药请求
+    private fun handleRemoteBolusFromTreatment(treatment: JSONObject) {
+        try {
+            // 从treatment对象中获取_insulin字段值
+            val bolusAmount = treatment.getDouble("_insulin")
+            
+            // 记录日志，包含更多上下文信息
+            val eventType = treatment.optString("_eventType", "Unknown")
+            val drugType = treatment.optString("_drugType", "Unknown")
+            rxBus.send(EventNSClientNewLog("◄ WS Web", "Processing insulin from treatment: $bolusAmount U, Type: $drugType, Event: $eventType"))
+            
+            // 创建打药信息对象
+            val detailedBolusInfo = DetailedBolusInfo()
+            detailedBolusInfo.insulin = bolusAmount
+            
+            // 直接执行打药操作
+            commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                override fun run() {
+                    // 记录基本日志
+                    val result: PumpEnactResult = result
+                    if (result.success) {
+                        rxBus.send(EventNSClientNewLog("◄ WS Web", "Remote bolus from treatment completed: ${result.bolusDelivered} U"))
+                    } else {
+                        rxBus.send(EventNSClientNewLog("◄ WS Web", "Remote bolus from treatment failed"))
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            // 简单的异常处理
+            rxBus.send(EventNSClientNewLog("◄ WS Web", "Error processing treatment bolus: ${e.message}"))
+        }
     }
 
     @Suppress("SameParameterValue")
