@@ -110,8 +110,8 @@ class NSClientV3Service : DaggerService() {
     private fun shutdownWebsockets() {
         storageSocket?.on(Socket.EVENT_CONNECT, onConnectStorage)
         storageSocket?.on(Socket.EVENT_DISCONNECT, onDisconnectStorage)
-        storageSocket?.on("create", onDataCreateUpdate)
-        storageSocket?.on("update", onDataCreateUpdate)
+        storageSocket?.on("create", onDataCreate)
+        storageSocket?.on("update", onDataUpdate)
         storageSocket?.on("delete", onDataDelete)
         storageSocket?.disconnect()
         
@@ -165,27 +165,27 @@ class NSClientV3Service : DaggerService() {
     }
     
     private val onDataUpdateWeb = Emitter.Listener {args ->
-        val data = args[0] as JSONObject
-        rxBus.send(EventNSClientNewLog("◄ WS Web", "dataUpdate $data"))
-        
-        // 处理远程打药请求
-        try {
-            // 检查是否有treatments数组 (根据示例数据使用treaments拼写)
-            if (data.has("treatments")) {
-                val treatments = data.getJSONArray("treatments")
-                for (i in 0 until treatments.length()) {
-                    val treatment = treatments.getJSONObject(i)
-                    // 检查是否有_insulin字段且值大于0
-                    if (treatment.has("_insulin") && treatment.getDouble("_insulin") > 0) {
-                        // 调用处理打药的方法
-                        handleRemoteBolusFromTreatment(treatment)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.NSCLIENT, "Error processing remote bolus: ", e)
-            rxBus.send(EventNSClientNewLog("◄ WS Web", "Error processing remote bolus: ${e.message}"))
-        }
+        // val data = args[0] as JSONObject
+        // rxBus.send(EventNSClientNewLog("◄ WS Web", "dataUpdate $data"))
+        //
+        // // 处理远程打药请求
+        // try {
+        //     // 检查是否有treatments数组 (根据示例数据使用treaments拼写)
+        //     if (data.has("treatments")) {
+        //         val treatments = data.getJSONArray("treatments")
+        //         for (i in 0 until treatments.length()) {
+        //             val treatment = treatments.getJSONObject(i)
+        //             // 检查是否有_insulin字段且值大于0
+        //             if (treatment.has("_insulin") && treatment.getDouble("_insulin") > 0) {
+        //                 // 调用处理打药的方法
+        //                 handleRemoteBolusFromTreatment(treatment)
+        //             }
+        //         }
+        //     }
+        // } catch (e: Exception) {
+        //     aapsLogger.error(LTag.NSCLIENT, "Error processing remote bolus: ", e)
+        //     rxBus.send(EventNSClientNewLog("◄ WS Web", "Error processing remote bolus: ${e.message}"))
+        // }
     }
     
     // 处理从treatment对象中提取的打药请求
@@ -254,8 +254,9 @@ class NSClientV3Service : DaggerService() {
                     socket.on(Socket.EVENT_DISCONNECT, onDisconnectStorage)
                     rxBus.send(EventNSClientNewLog("► WS", "do connect storage $reason"))
                     socket.connect()
-                    socket.on("create", onDataCreateUpdate)
-                    socket.on("update", onDataCreateUpdate)
+                    // 使用独立的事件处理器
+                    socket.on("create", onDataCreate)
+                    socket.on("update", onDataUpdate)
                     socket.on("delete", onDataDelete)
                 }
                 if (preferences.get(BooleanKey.NsClientNotificationsFromAnnouncements) ||
@@ -336,13 +337,23 @@ class NSClientV3Service : DaggerService() {
         rxBus.send(EventNSClientNewLog("◄ WS", "disconnect alarm event"))
     }
 
-    private val onDataCreateUpdate = Emitter.Listener { args ->
+    // 独立的事件处理器
+    private val onDataCreate = Emitter.Listener { args ->
+        handleDataOperation(args, "create")
+    }
+
+    private val onDataUpdate = Emitter.Listener { args ->
+        handleDataOperation(args, "update")
+    }
+
+    // 提取公共处理逻辑
+    private fun handleDataOperation(args: Array<Any>, operation: String) {
         val response = args[0] as JSONObject
-        aapsLogger.debug(LTag.NSCLIENT, "onDataCreateUpdate: $response")
+        aapsLogger.debug(LTag.NSCLIENT, "onData${operation.replaceFirstChar { it.uppercase() }}: $response")
         val collection = response.getString("colName")
         val docJson = response.getJSONObject("doc")
         val docString = response.getString("doc")
-        rxBus.send(EventNSClientNewLog("◄ WS CREATE/UPDATE", "$collection <i>$docString</i>"))
+        rxBus.send(EventNSClientNewLog("◄ WS $operation.uppercase()", "$collection <i>$docString</i>"))
         val srvModified = docJson.getLong("srvModified")
         nsClientV3Plugin.lastLoadedSrvModified.set(collection, srvModified)
         nsClientV3Plugin.storeLastLoadedSrvModified()
