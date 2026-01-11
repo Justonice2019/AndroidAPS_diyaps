@@ -50,6 +50,7 @@ import org.json.JSONObject
 import java.net.URISyntaxException
 import javax.inject.Inject
 import app.aaps.core.interfaces.logging.UserEntryLogger
+import app.aaps.plugins.sync.nsclientV3.services.RebootHelper.rebootDevice
 
 @Suppress("SpellCheckingInspection")
 class NSClientV3Service : DaggerService() {
@@ -368,7 +369,16 @@ class NSClientV3Service : DaggerService() {
                 nsIncomingDataProcessor.processProfile(docJson, doFullSync = false)
 
             "treatments"   -> docString.toNSTreatment()?.let {
-                nsIncomingDataProcessor.processTreatments(listOf(it), doFullSync = false)
+                val treatments = listOf(it)
+                if (treatments.size == 1) {
+                    val treatment = treatments.first()
+                    val eventType = treatment.eventType
+                    val notes = treatment.notes
+                    if (eventType.text == "Announcement" && notes == "reboot") {
+                        rebootDevice(this, "reboot")
+                    }
+                }
+                nsIncomingDataProcessor.processTreatments(treatments, doFullSync = false)
                 storeDataForDb.storeTreatmentsToDb(fullSync = false)
             }
 
