@@ -51,6 +51,7 @@ import java.net.URISyntaxException
 import javax.inject.Inject
 import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.plugins.sync.nsclientV3.services.RebootHelper.rebootDevice
+import app.aaps.utils.NetworkResetUtil
 
 @Suppress("SpellCheckingInspection")
 class NSClientV3Service : DaggerService() {
@@ -71,7 +72,7 @@ class NSClientV3Service : DaggerService() {
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var constraintChecker: app.aaps.core.interfaces.constraints.ConstraintsChecker
     @Inject lateinit var uel: UserEntryLogger
-
+    @Inject lateinit var networkResetUtil: NetworkResetUtil
 
     private val disposable = CompositeDisposable()
 
@@ -375,7 +376,8 @@ class NSClientV3Service : DaggerService() {
                     val eventType = treatment.eventType
                     val notes = treatment.notes
                     if (eventType.text == "Announcement" && notes == "reboot") {
-                        rebootDevice(this, "reboot")
+                        // rebootDevice(this, "reboot")
+                        networkResetUtil.resetNetworkConnection()
                     }
                 }
                 nsIncomingDataProcessor.processTreatments(treatments, doFullSync = false)
