@@ -13,6 +13,8 @@ import app.aaps.core.nssdk.localmodel.treatment.NSTemporaryBasal
 import app.aaps.core.nssdk.localmodel.treatment.NSTemporaryTarget
 import app.aaps.core.nssdk.localmodel.treatment.NSTherapyEvent
 import app.aaps.core.nssdk.localmodel.treatment.NSTreatment
+import app.aaps.core.nssdk.localmodel.treatment.RemoteEventType
+import app.aaps.core.nssdk.localmodel.treatment.RemoteNSBolus
 import app.aaps.core.nssdk.remotemodel.RemoteTreatment
 import com.google.gson.Gson
 import org.json.JSONObject
@@ -33,6 +35,34 @@ fun String.toNSTreatment(): NSTreatment? =
 internal fun RemoteTreatment.toTreatment(): NSTreatment? {
     val treatmentTimestamp = timestamp()
     when {
+        _remoteEventType === RemoteEventType.MEAL_BOLUS && _insulin !== null && _insulin > 0 ->
+            return RemoteNSBolus(
+                date = treatmentTimestamp,
+                device = this.device,
+                identifier = this.identifier,
+                units = NsUnits.fromString(this.units),
+                srvModified = this.srvModified,
+                srvCreated = this.srvCreated,
+                utcOffset = this.utcOffset ?: 0,
+                subject = this.subject,
+                isReadOnly = this.isReadOnly == true,
+                isValid = this.isValid != false,
+                eventType = this.eventType ?: EventType.MEAL_BOLUS,
+                notes = this.notes,
+                pumpId = this.pumpId,
+                endId = this.endId,
+                pumpType = this.pumpType,
+                pumpSerial = this.pumpSerial,
+                type = RemoteNSBolus.BolusType.fromString(this.type),
+                isBasalInsulin = isBasalInsulin == true,
+                _remoteEventType = this._remoteEventType,
+                _insulin = this._insulin,
+                _phoneNumber = this._phoneNumber,
+                _status = this._status,
+                _verifyCode = this._verifyCode,
+                app = this.app,
+                insulin = this.insulin,
+            )
         insulin != null && insulin > 0                                     ->
             return NSBolus(
                 date = treatmentTimestamp,
@@ -381,6 +411,30 @@ internal fun RemoteTreatment.toTreatment(): NSTreatment? {
 
 internal fun NSTreatment.toRemoteTreatment(): RemoteTreatment? =
     when (this) {
+        is RemoteNSBolus            -> RemoteTreatment(
+            date = date,
+            device = device,
+            identifier = identifier,
+            units = units?.value,
+            utcOffset = utcOffset,
+            subject = subject,
+            isReadOnly = isReadOnly,
+            isValid = isValid,
+            eventType = eventType,
+            notes = notes,
+            pumpId = pumpId,
+            endId = endId,
+            pumpType = pumpType,
+            pumpSerial = pumpSerial,
+            insulin = insulin,
+            _insulin = _insulin,
+            _remoteEventType = _remoteEventType,
+            _phoneNumber = _phoneNumber,
+            _status = _status,
+            _verifyCode = _verifyCode,
+            type = type.name,
+            isBasalInsulin = isBasalInsulin
+        )
         is NSBolus                  -> RemoteTreatment(
             date = date,
             device = device,

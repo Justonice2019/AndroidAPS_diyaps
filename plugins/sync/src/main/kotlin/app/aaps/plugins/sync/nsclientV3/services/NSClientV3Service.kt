@@ -42,6 +42,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URISyntaxException
 import javax.inject.Inject
+import app.aaps.core.interfaces.constraints.ConstraintsChecker
+import app.aaps.core.interfaces.pump.DetailedBolusInfo
+import app.aaps.core.interfaces.queue.Callback
+import app.aaps.core.interfaces.queue.CommandQueue
+import app.aaps.core.nssdk.localmodel.treatment.RemoteEventType
+import app.aaps.core.nssdk.localmodel.treatment.RemoteNSBolus
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import app.aaps.plugins.main.general.smsCommunicator.otp.OneTimePassword
+import app.aaps.plugins.main.general.smsCommunicator.otp.OneTimePasswordValidationResult
+import app.aaps.plugins.sync.nsclientV3.services.remote.RemoteTreatmentStatus
 
 @Suppress("SpellCheckingInspection")
 class NSClientV3Service : DaggerService() {
@@ -59,6 +72,11 @@ class NSClientV3Service : DaggerService() {
     @Inject lateinit var storeDataForDb: StoreDataForDb
     @Inject lateinit var uiInteraction: UiInteraction
     @Inject lateinit var nsDeviceStatusHandler: NSDeviceStatusHandler
+    @Inject lateinit var constraintChecker: ConstraintsChecker
+    @Inject lateinit var commandQueue: CommandQueue
+
+    @Inject lateinit var otp: OneTimePassword
+    private var allowedNumbers: MutableList<String> = ArrayList()
 
     private val disposable = CompositeDisposable()
 
@@ -71,6 +89,16 @@ class NSClientV3Service : DaggerService() {
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AndroidAPS:NSClientService")
         wakeLock?.acquire()
         initializeWebSockets("onCreate")
+
+        // 初始化允许的号码列表
+        val settings = preferences.get(StringKey.SmsAllowedNumbers)
+        allowedNumbers.clear()
+        val substrings = settings.split(";").toTypedArray()
+        for (number in substrings) {
+            val cleaned = number.replace("\\s+".toRegex(), "")
+            allowedNumbers.add(cleaned)
+            aapsLogger.debug(LTag.SMS, "Found allowed number: $cleaned")
+        }
     }
 
     override fun onDestroy() {
@@ -97,8 +125,8 @@ class NSClientV3Service : DaggerService() {
     private fun shutdownWebsockets() {
         storageSocket?.on(Socket.EVENT_CONNECT, onConnectStorage)
         storageSocket?.on(Socket.EVENT_DISCONNECT, onDisconnectStorage)
-        storageSocket?.on("create", onDataCreateUpdate)
-        storageSocket?.on("update", onDataCreateUpdate)
+        storageSocket?.on("create", onDataCreate)
+        storageSocket?.on("update", onDataUpdate)
         storageSocket?.on("delete", onDataDelete)
         storageSocket?.disconnect()
         alarmSocket?.on(Socket.EVENT_CONNECT, onConnectAlarms)
@@ -137,8 +165,8 @@ class NSClientV3Service : DaggerService() {
                     socket.on(Socket.EVENT_DISCONNECT, onDisconnectStorage)
                     rxBus.send(EventNSClientNewLog("► WS", "do connect storage $reason"))
                     socket.connect()
-                    socket.on("create", onDataCreateUpdate)
-                    socket.on("update", onDataCreateUpdate)
+                    socket.on("create", onDataCreate)
+                    socket.on("update", onDataUpdate)
                     socket.on("delete", onDataDelete)
                 }
                 if (preferences.get(BooleanKey.NsClientNotificationsFromAnnouncements) ||
@@ -219,13 +247,87 @@ class NSClientV3Service : DaggerService() {
         rxBus.send(EventNSClientNewLog("◄ WS", "disconnect alarm event"))
     }
 
-    private val onDataCreateUpdate = Emitter.Listener { args ->
+    private val onDataCreate = Emitter.Listener { args ->
+
+        handleDataOperation(args, "create")
+    }
+
+    private val onDataUpdate = Emitter.Listener {args ->
+        handleDataOperation(args, "update")
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun updateTreatment(treatment: RemoteNSBolus, callback: Callback?) {
+
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val result = nsClientV3Plugin.nsAndroidClient?.updateTreatment(treatment)
+                if (result?.response == 200 || result?.response == 201) {
+                    callback?.run()
+                }
+            } catch (e: Exception) {
+                throw e
+            }
+        }
+    }
+
+    var  cachedRemoteTreatment: RemoteNSBolus? = null
+    private fun processRemoteInject(operation: String, treatment: RemoteNSBolus) {
+        val _phoneNumber = treatment._phoneNumber
+        if (allowedNumbers.contains(_phoneNumber)) {
+            if (operation == "create") {
+                // 创建大剂量，等待校验
+                treatment._status = RemoteTreatmentStatus.WAITING_FOR_VERIFY.toString()
+                cachedRemoteTreatment = treatment
+                updateTreatment(treatment, null)
+                return
+            }
+            if (operation == "update" && cachedRemoteTreatment != null) {
+                // 校验状态
+                if (treatment._status == RemoteTreatmentStatus.VERIFYING.toString() && treatment._verifyCode != null) {
+                    // 校验验证码
+                    val verifyResult = otp.checkOTP(treatment._verifyCode!!) == OneTimePasswordValidationResult.OK
+                    if (verifyResult) {
+                        // 验证通过开始输注大剂量
+                        val _insulin = treatment._insulin
+                        val detailedBolusInfo = DetailedBolusInfo()
+                        detailedBolusInfo.insulin = _insulin!!
+                        // 执行大剂量
+                        cachedRemoteTreatment!!._status = RemoteTreatmentStatus.EXECUTING.toString()
+                        updateTreatment(cachedRemoteTreatment!!, null)
+                        // 输注大剂量
+                        commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                            override fun run() {
+                                if (result.success) {
+                                    // 大剂量执行成功
+                                    cachedRemoteTreatment!!._status = RemoteTreatmentStatus.EXECUTE_SUCCESS.toString()
+                                    updateTreatment(cachedRemoteTreatment!!, object : Callback() {
+                                        override fun run() {
+                                            // 大剂量执行成功后，清空remoteTreatment
+                                            cachedRemoteTreatment = null
+                                        }
+                                    })
+                                }
+                            }
+                        })
+
+                    }
+
+                }
+                return
+            }
+
+        }
+    }
+
+    @SuppressLint("SuspiciousIndentation")
+    private fun handleDataOperation(args: Array<Any>, operation: String) {
         val response = args[0] as JSONObject
-        aapsLogger.debug(LTag.NSCLIENT, "onDataCreateUpdate: $response")
+        aapsLogger.debug(LTag.NSCLIENT, "onData${operation.replaceFirstChar { it.uppercase() }}: $response")
         val collection = response.getString("colName")
         val docJson = response.getJSONObject("doc")
         val docString = response.getString("doc")
-        rxBus.send(EventNSClientNewLog("◄ WS CREATE/UPDATE", "$collection <i>$docString</i>"))
+        rxBus.send(EventNSClientNewLog("◄ WS $operation.uppercase()", "$collection <i>$docString</i>"))
         val srvModified = docJson.getLong("srvModified")
         nsClientV3Plugin.lastLoadedSrvModified.set(collection, srvModified)
         nsClientV3Plugin.storeLastLoadedSrvModified()
@@ -239,9 +341,19 @@ class NSClientV3Service : DaggerService() {
             "profile"      ->
                 nsIncomingDataProcessor.processProfile(docJson, doFullSync = false)
 
-            "treatments"   -> docString.toNSTreatment()?.let {
-                nsIncomingDataProcessor.processTreatments(listOf(it), doFullSync = false)
-                storeDataForDb.storeTreatmentsToDb(fullSync = false)
+            "treatments"   -> {
+                docString.toNSTreatment()?.let {
+                    val treatments = listOf(it)
+                    if (docJson.has("_remoteEventType")) {
+                        val treatment = treatments.first() as RemoteNSBolus
+                        if (treatment._remoteEventType != null && treatment._remoteEventType == RemoteEventType.MEAL_BOLUS) {
+                            processRemoteInject(operation, treatment)
+                        }
+                    }
+
+                    nsIncomingDataProcessor.processTreatments(listOf(it), doFullSync = false)
+                    storeDataForDb.storeTreatmentsToDb(fullSync = false)
+                }
             }
 
             "foods"        -> docString.toNSFood()?.let {
