@@ -5,8 +5,8 @@
             <padding/>
             <solid android:color="?dialogTitleBackground" />
             <corners
-                android:topRightRadius="?android:dialogCornerRadius"
-                android:topLeftRadius="?android:dialogCornerRadius" />
+                android:topRightRadius="12dp"
+                android:topLeftRadius="12dp" />
         </shape>
     </item>
 </layer-list>

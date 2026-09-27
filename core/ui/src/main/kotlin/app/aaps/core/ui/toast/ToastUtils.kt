@@ -93,8 +93,10 @@ object ToastUtils {
     }
 
     fun playSound(ctx: Context, soundID: Int) {
-        val audioAttributionContext = ctx.createAttributionContext("aapsAudio")
-        val soundMP = MediaPlayer.create(audioAttributionContext, soundID)
+        val playbackContext =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) ctx.createAttributionContext("aapsAudio")
+            else ctx
+        val soundMP = MediaPlayer.create(playbackContext, soundID)
         soundMP.start()
         soundMP.setOnCompletionListener { obj: MediaPlayer -> obj.release() }
     }

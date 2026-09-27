@@ -124,8 +124,6 @@ class HistoryBrowseActivity : TranslatedDaggerAppCompatActivity() {
                 .show(supportFragmentManager, "history_date_picker")
         }
 
-        windowManager.currentWindowMetrics
-
         axisWidth = when {
             resources.displayMetrics.densityDpi <= 120 -> 3
             resources.displayMetrics.densityDpi <= 160 -> 10

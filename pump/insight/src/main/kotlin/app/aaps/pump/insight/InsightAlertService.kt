@@ -83,7 +83,14 @@ class InsightAlertService : DaggerService(), InsightConnectionService.StateCallb
     @SuppressWarnings("deprecation", "RedundantSuppression")
     override fun onCreate() {
         super.onCreate()
-        vibrator = (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+        vibrator =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                val legacyVibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+                legacyVibrator
+            }
         bindService(Intent(this, InsightConnectionService::class.java), serviceConnection, BIND_AUTO_CREATE)
         alertLiveData.value = null
     }

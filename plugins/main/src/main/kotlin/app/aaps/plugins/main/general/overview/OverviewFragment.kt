@@ -194,9 +194,16 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
 
         // pre-process landscape mode
         //check screen width
-        val wm = requireActivity().windowManager.currentWindowMetrics
-        val screenWidth = wm.bounds.width()
-        val screenHeight = wm.bounds.height()
+        val (screenWidth, screenHeight) =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val bounds = requireActivity().windowManager.currentWindowMetrics.bounds
+                bounds.width() to bounds.height()
+            } else {
+                val size = android.graphics.Point()
+                @Suppress("DEPRECATION")
+                requireActivity().windowManager.defaultDisplay.getSize(size)
+                size.x to size.y
+            }
         smallWidth = screenWidth <= Constants.SMALL_WIDTH
         smallHeight = screenHeight <= Constants.SMALL_HEIGHT
         val landscape = screenHeight < screenWidth
@@ -702,7 +709,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
 
         // aps mode
         fun apsModeSetA11yLabel(stringRes: Int) {
-            binding.infoLayout.apsMode.stateDescription = rh.gs(stringRes)
+            androidx.core.view.ViewCompat.setStateDescription(binding.infoLayout.apsMode, rh.gs(stringRes))
         }
 
         runOnUiThread {

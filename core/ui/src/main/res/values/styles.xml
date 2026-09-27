@@ -105,7 +105,8 @@
         <item name="android:alertDialogTheme">@style/DialogTheme</item>
         <item name="alertDialogTheme">@style/DialogTheme</item>
         <!---Dialog fragment Background Color  -->
-        <item name="android:dialogCornerRadius">12dp</item>
+        <!-- ignored below API 28, framework attribute -->
+        <item name="android:dialogCornerRadius" ns2:targetApi="28">12dp</item>
         <!---Overview and History browser  -->
         <item name="graphGrid">@color/graphGrid</item>
         <item name="viewPortBackgroundColor">@color/transparent</item>

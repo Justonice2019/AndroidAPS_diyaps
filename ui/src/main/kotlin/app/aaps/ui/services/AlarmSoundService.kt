@@ -74,9 +74,8 @@ class AlarmSoundService : DaggerService() {
         player?.let { if (it.isPlaying) it.stop() }
 
         if (intent?.hasExtra(SOUND_ID) == true) resourceId = intent.getIntExtra(SOUND_ID, app.aaps.core.ui.R.raw.error)
-        val audioAttributionContext = createAttributionContext("aapsAudio")
         player =
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) MediaPlayer(audioAttributionContext)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) MediaPlayer(createAttributionContext("aapsAudio"))
             else MediaPlayer()
         try {
             val afd = rh.openRawResourceFd(resourceId) ?: return START_NOT_STICKY

@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        Vendored AARs that declare a higher minSdk than they actually need
+        (they only use APIs available since well before Android 8.1 / API 27).
+        Keep the merged app minSdk at 27 on Android 8.1 devices.
+    -->
+    <uses-sdk tools:overrideLibrary="com.joanzapata.iconify,app.aaps.pump.eopatch.core" />
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />

@@ -121,7 +121,12 @@ class GarminDeviceClient(
     }
 
     private fun bindService() {
-        context.bindService(serviceIntent, Context.BIND_AUTO_CREATE, executor, ciqServiceConnection)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            context.bindService(serviceIntent, Context.BIND_AUTO_CREATE, executor, ciqServiceConnection)
+        } else {
+            // no executor variant before Android 10, callbacks are delivered on the main thread
+            context.bindService(serviceIntent, ciqServiceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
 
     override val connectedDevices: List<GarminDevice>
